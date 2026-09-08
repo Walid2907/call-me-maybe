@@ -74,25 +74,21 @@ def system_prompt_builder(functions: List[Any]) -> str:
         param_parts = []
         for p, info in f.parameters.items():
             param_parts.append(
-                f'"{p}": {{"type": "{info.type}"}}'
-            )
+                f'"{p}": {{"type": "{info.type}"}}')
         params_str = ", ".join(param_parts)
         lines.append(
             f'{{"name": "{f.name}", '
             f'"description": "{f.description}", '
-            f'"parameters": {{{params_str}}}}}'
-        )
+            f'"parameters": {{{params_str}}}}}')
     lines.append(
         "Choose the appropriate function "
-        "and its parameters based on the user input."
-    )
+        "and its parameters based on the user input.")
     lines.append(
         "Rules: generate only valid JSON. "
         "Use exact types: numbers without quotes, "
         "strings with quotes. "
         "For regex use standard syntax without extra "
-        "parentheses."
-    )
+        "parentheses.")
     return "\n".join(lines)
 
 
@@ -117,22 +113,19 @@ def generate_function_name(
         return ""
     generated: str = ""
     longest = len(
-        sorted(function_names, key=lambda x: len(x), reverse=True)[0]
-    )
+        sorted(function_names, key=lambda x: len(x), reverse=True)[0])
     max_tokens = max(longest * 2, 16)
 
     for _ in range(max_tokens):
         logits = model.get_logits_from_input_ids(
-            model.encode(context + generated)[0].tolist()
-        )
+            model.encode(context + generated)[0].tolist())
 
         for token_id in range(len(logits)):
             token_str = _token_str(model, token_id, token_map)
             combined = generated + token_str
             if not any(
                 fn.startswith(combined)
-                for fn in function_names
-            ):
+                for fn in function_names):
                 logits[token_id] = float("-inf")
         best_id = _argmax(logits)
         best_str: str = _token_str(model, best_id, token_map)
@@ -289,34 +282,10 @@ def generate_string_value(
         logits = model.get_logits_from_input_ids(
             model.encode(context + value)[0].tolist()
         )
-
         best_id = _argmax(logits)
-        best_str: str = _token_str(model, best_id, token_map)
+        best_str = _token_str(model, best_id, token_map)
 
-        if '"' in best_str:
-            remaining = best_str
-            while '"' in remaining:
-                idx = remaining.index('"')
-                value += remaining[:idx]
-                remaining = remaining[idx + 1:]
-
-                probe_logits = model.get_logits_from_input_ids(
-                    model.encode(context + value + '"')[0].tolist()
-                )
-                probe_id = _argmax(probe_logits)
-                probe_str = _token_str(model, probe_id, token_map)
-                trimmed = probe_str.strip()
-                if (
-                    trimmed == ""
-                    or trimmed == ","
-                    or trimmed == "}"
-                    or trimmed.startswith(",")
-                    or trimmed.startswith("}")
-                ):
-                    return _finish_string(value, source)
-                value += '"'
-            value += remaining
-        elif constrained:
+        if constrained:
             allowed = _allowed_token_ids(
                 value, matches, source, token_map, by_first_char
             )
@@ -329,14 +298,31 @@ def generate_string_value(
                 best_id = _argmax(logits)
                 best_str = _token_str(model, best_id, token_map)
             value += best_str
+
+        elif '"' in best_str:
+            remaining = best_str
+            while '"' in remaining:
+                idx = remaining.index('"')
+                value += remaining[:idx]
+                remaining = remaining[idx + 1:]
+                probe_logits = model.get_logits_from_input_ids(
+                    model.encode(context + value + '"')[0].tolist()
+                )
+                probe_id = _argmax(probe_logits)
+                probe_str = _token_str(model, probe_id, token_map)
+                trimmed = probe_str.strip()
+                if (trimmed == "" or trimmed in (",", "}")
+                        or trimmed.startswith(",") or trimmed.startswith("}")):
+                    return _finish_string(value, source)
+                value += '"'
+            value += remaining
+
         else:
             value += best_str
 
         if constrained:
-            matches = [
-                pos for pos in matches
-                if source[pos:pos + len(value)] == value
-            ]
+            matches = [pos for pos in matches
+                    if source[pos:pos + len(value)] == value]
             if not matches:
                 constrained = False
         elif source and value:
