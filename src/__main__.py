@@ -1,13 +1,11 @@
 import json
-import sys
 from time import time
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
-from llm_sdk.llm_sdk import Small_LLM_Model
+from llm_sdk.llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
 
 from .Constrained_decoding import (
-    build_token_map,
     system_prompt_builder,
     generate_function_name,
     generate_string_value,
@@ -38,27 +36,7 @@ def _get_function_by_name(
         if f.name == name:
             return f
     raise ValueError(
-        f"Function '{name}' not found in definitions."
-    )
-
-
-def _parse_number(raw: str, is_integer: bool) -> object:
-    """Safely convert a generated numeric string to a value.
-
-    Args:
-        raw: The numeric string produced by constrained decoding.
-        is_integer: True to coerce the value to an integer.
-
-    Returns:
-        The numeric value, or a safe fallback if parsing fails.
-    """
-    try:
-        value = float(raw)
-    except (ValueError, OverflowError):
-        return 0 if is_integer else 0.0
-    if is_integer:
-        return int(value)
-    return value
+        f"Function '{name}' not found in definitions.")
 
 
 def main() -> None:
@@ -66,129 +44,89 @@ def main() -> None:
     parser = argparser()
 
     try:
-        functions = function_loader(
-            parser.functions_definition
-        )
-    except FileNotFoundError:
-        print(f"Error: function definitions file not found: "
-              f"{parser.functions_definition}")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Error: invalid JSON in function definitions "
-              f"({parser.functions_definition}): {e}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Error: invalid function definitions: {e}")
-        sys.exit(1)
+        functions = function_loader(parser.functions_definition)
+    except (FileNotFoundError, json.JSONDecodeError,
+            ValueError) as e:
+        raise RuntimeError(
+            f"Failed to load function definitions: {e}")
     if not functions:
-        print("Error: no function definitions found.")
-        sys.exit(1)
+        raise RuntimeError("No function definitions found.")
 
     try:
         prompts = prompts_loader(parser.input)
-    except FileNotFoundError:
-        print(f"Error: input file not found: {parser.input}")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Error: invalid JSON in input file "
-              f"({parser.input}): {e}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Error: invalid input prompts: {e}")
-        sys.exit(1)
+    except (FileNotFoundError, json.JSONDecodeError,
+            ValueError) as e:
+        raise RuntimeError(f"Failed to load prompts: {e}")
     if not prompts:
-        print("Error: no input prompts found.")
-        sys.exit(1)
-
+        raise RuntimeError("No input prompts found.")
+# build the prompte to pass to the llm
     prompt_system = system_prompt_builder(functions)
+# function names list
     function_names = [f.name for f in functions]
-
     try:
         model = Small_LLM_Model(parser.model)
-    except OSError as e:
-        print(f"Error: failed to load model "
-              f"'{parser.model}': {e}")
-        sys.exit(1)
-
-    token_map: Dict[int, str] = build_token_map(model)
-
+    except OSError:
+        raise RuntimeError(f"Model {parser.model} not found "
+                           f"or failed to download.")
     start_time = time()
     results = []
     for p in prompts:
         prompt = p.prompt
         if not prompt:
-            print("Skipping empty prompt.")
-            results.append({
-                "prompt": prompt,
-                "name": "",
-                "parameters": {},
-            })
+            print("Invalid prompt!")
             continue
-        prompt_len = max(len(prompt), 16)
-        context = (
-            f"{prompt_system}\n"
-            f'{{"prompt": "{prompt}",'
-            f'"name": "'
-        )
+        prompt_len = len(prompt) * 50
+        context = (f"{prompt_system}\n"
+                   f'{{"prompt": "{prompt}",'
+                   f'"name": "')
         print(f"Processing: {prompt}")
 
         try:
+            # generate function name and then check if
+            # it's a valid name
             func_name = generate_function_name(
-                model, context, function_names, token_map
-            )
+                model, context, function_names)
             func_def = _get_function_by_name(
-                functions, func_name
-            )
-
-            context += (
-                f'{func_name}", "parameters": {{'
-            )
-
-            parameters: Dict[str, object] = {}
-            param_items = list(
-                func_def.parameters.items()
-            )
-            for i, (param_name, param_info) in enumerate(
-                param_items
-            ):
+                functions, func_name)
+            # we append it to the context string
+            # before starting to get the params
+            context += (f'{func_name}", "parameters": {{')
+            parameters: dict[str, object] = {}
+            param_items = list(func_def.parameters.items())
+            for i, (param_name, param_info) in enumerate(param_items):
                 context += f'"{param_name}": '
                 param_type = param_info.type
 
                 if param_type == "string":
                     context += '"'
-                    val = generate_string_value(
-                        model, context, prompt_len, token_map, prompt
-                    )
+                    val = generate_string_value(model, context, prompt_len)
                     context += val + '"'
                     parameters[param_name] = val
                 elif param_type == "number":
                     val = generate_number_value(
-                        model, context, prompt_len, token_map
+                        model, context, prompt_len
                     )
                     context += val
-                    parameters[param_name] = _parse_number(
-                        val, is_integer=False
-                    )
+                    parameters[param_name] = float(val)
                 elif param_type == "integer":
                     val = generate_number_value(
-                        model, context, prompt_len, token_map
+                        model, context, prompt_len
                     )
                     context += val
-                    parameters[param_name] = _parse_number(
-                        val, is_integer=True
+                    parameters[param_name] = int(
+                        float(val)
                     )
                 elif param_type == "boolean":
                     val = generate_boolean_value(
-                        model, context, prompt_len, token_map
+                        model, context, prompt_len
                     )
                     context += val
                     parameters[param_name] = (
                         val == "true"
                     )
                 else:
-                    context += '"'
                     val = generate_string_value(
-                        model, context, prompt_len, token_map, prompt
+                        model, context, prompt_len
                     )
                     context += val + '"'
                     parameters[param_name] = val
@@ -221,8 +159,12 @@ def main() -> None:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {output_path}")
     time_cost = end_time - start_time
-    print(f"Time: {int(time_cost / 60)}:{int(time_cost % 60)}m")
+    print(f"Time: {int(time_cost / 60)}minute {int(time_cost % 60)}second")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"Error: {e}")
+        raise SystemExit(1)
