@@ -13,9 +13,9 @@ clean:
 	@rm -rf */__pycache__ */.mypy_cache .mypy_cache __pycache__ data/output
 
 lint:
-	flake8 .
+	flake8 --exclude=.venv
 	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs --follow-imports=silent
 
 lint-strict:
-	flake8 .
+	flake8 --exclude=.venv
 	mypy . --strict --follow-imports=silent

@@ -148,10 +148,6 @@ The project validates functionality through a mix of manual runs and unit-style 
 
 ## Resources
 
-- [Qwen3 models](https://huggingface.co/Qwen/Qwen3-0.6B) — the small LLM used for
-  inference.
-- [Transformers documentation](https://huggingface.co/docs/transformers) — for
-  tokenization and model inference details.
 - [Pydantic documentation](https://docs.pydantic.dev/) — for data validation.
 - [uv documentation](https://docs.astral.sh/uv/) — for dependency and environment
   management.
